@@ -1,0 +1,27 @@
+<!DOCTYPE RCC>
+<RCC version="1.0">
+    <qresource>
+        <!-- Icons -->
+        <file alias="icons/add.png">icons/add.png</file>
+        <file alias="icons/export.png">icons/export.png</file>
+        <file alias="icons/fit.png">icons/fit.png</file>
+        <file alias="icons/import.png">icons/import.png</file>
+        <file alias="icons/linux.png">icons/linux.png</file>
+        <file alias="icons/mac.icns">icons/mac.icns</file>
+        <file alias="icons/new-file.png">icons/new-file.png</file>
+        <file alias="icons/open.png">icons/open.png</file>
+        <file alias="icons/remove.png">icons/remove.png</file>
+        <file alias="icons/reset.png">icons/reset.png</file>
+        <file alias="icons/save-as.png">icons/save-as.png</file>
+        <file alias="icons/save.png">icons/save.png</file>
+        <file alias="icons/windows.ico">icons/windows.ico</file>
+        <file alias="icons/zoom-in.png">icons/zoom-in.png</file>
+        <file alias="icons/zoom-out.png">icons/zoom-out.png</file>
+        
+        <!-- Logos -->
+        <file alias="logos/gta3.png">logos/gta3.png</file>
+        <file alias="logos/gtasa.png">logos/gtasa.png</file>
+        <file alias="logos/gtavc.png">logos/gtavc.png</file>
+    </qresource>
+</RCC>
+
