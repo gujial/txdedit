@@ -14,14 +14,14 @@
 #include <QListView>
 #include <QIntValidator>
 #include "CheckBox.h"
-#include "../core/TXDTextureHeader.h"
+#include "TXDModel.h"
 
 class TexturePropertiesWidget : public QWidget {
     Q_OBJECT
 
 public:
     explicit TexturePropertiesWidget(QWidget *parent = nullptr);
-    void setTexture(TXDTextureHeader* header);
+    void setTexture(TXDFileEntry* entry);
     void clear();
 
 signals:
@@ -30,16 +30,15 @@ signals:
 private slots:
     void onNameChanged();
     void onAlphaNameChanged();
-    void onWidthChanged();
-    void onHeightChanged();
     void onMipmapCountChanged();
     void onAlphaChannelToggled(bool enabled);
+    void onCompressionToggled(bool enabled);
 
 private:
     void updateUI();
     void blockSignals(bool block);
     
-    TXDTextureHeader* currentHeader;
+    TXDFileEntry* currentEntry;
     
     QScrollArea* scrollArea;
     QWidget* contentWidget;
@@ -47,14 +46,15 @@ private:
     QGroupBox* basicGroup;
     QLineEdit* nameEdit;
     QLineEdit* alphaNameEdit;
-    QLineEdit* widthEdit;
-    QLineEdit* heightEdit;
+    QLabel* widthLabel;
+    QLabel* heightLabel;
     QLineEdit* mipmapEdit;
     CheckBox* alphaCheck;
     
     QGroupBox* formatGroup;
-    QComboBox* formatCombo;
-    QComboBox* compressionCombo;
+    QLabel* formatLabel;
+    QComboBox* formatCombo;  // Only shown for new textures
+    CheckBox* compressionCheck;
     
     QGroupBox* flagsGroup;
     QComboBox* filterCombo;

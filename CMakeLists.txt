@@ -8,21 +8,6 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 find_package(QT NAMES Qt6 Qt5 REQUIRED COMPONENTS Core Widgets)
 find_package(Qt${QT_VERSION_MAJOR} REQUIRED COMPONENTS Core Widgets)
 
-# Core library
-add_library(txd_core STATIC
-    core/TXDTypes.h
-    core/TXDTextureHeader.h
-    core/TXDTextureHeader.cpp
-    core/TXDArchive.h
-    core/TXDArchive.cpp
-    core/TXDConverter.h
-    core/TXDConverter.cpp
-)
-
-target_include_directories(txd_core PUBLIC
-    ${CMAKE_CURRENT_SOURCE_DIR}
-)
-
 # Squish library for DXT compression (libsquish 1.10 - local copy)
 set(SQUISH_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/vendor/libsquish/squish.cpp
@@ -46,7 +31,6 @@ add_library(squish STATIC ${SQUISH_SOURCES})
 target_include_directories(squish PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/vendor/libsquish
 )
-target_link_libraries(txd_core PUBLIC squish)
 
 # libimagequant library for palette generation (C library, local copy)
 # Enable C language for libimagequant
@@ -71,14 +55,38 @@ target_include_directories(libimagequant PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/vendor/libimagequant
 )
 
-target_link_libraries(txd_core PUBLIC squish libimagequant)
+# libtxd library - modern TXD read/write library
+add_library(libtxd STATIC
+    libtxd/txd_types.h
+    libtxd/txd_types.cpp
+    libtxd/txd_texture.h
+    libtxd/txd_texture.cpp
+    libtxd/txd_dictionary.h
+    libtxd/txd_dictionary.cpp
+    libtxd/txd_converter.h
+    libtxd/txd_converter.cpp
+)
 
+target_include_directories(libtxd PUBLIC
+    ${CMAKE_CURRENT_SOURCE_DIR}
+)
+
+target_link_libraries(libtxd PUBLIC squish libimagequant)
+
+# Generate version header
+configure_file(
+    ${CMAKE_CURRENT_SOURCE_DIR}/gui/version.h.in
+    ${CMAKE_CURRENT_BINARY_DIR}/gui/version.h
+    @ONLY
+)
 
 # GUI application
 set(GUI_SOURCES
     gui/main.cpp
     gui/MainWindow.h
     gui/MainWindow.cpp
+    gui/TXDModel.h
+    gui/TXDModel.cpp
     gui/TexturePreviewWidget.h
     gui/TexturePreviewWidget.cpp
     gui/TexturePropertiesWidget.h
@@ -109,9 +117,14 @@ else()
 endif()
 
 target_link_libraries(txdedit
-    txd_core
+    libtxd
     Qt${QT_VERSION_MAJOR}::Core
     Qt${QT_VERSION_MAJOR}::Widgets
+)
+
+# Add version header include directory
+target_include_directories(txdedit PRIVATE
+    ${CMAKE_CURRENT_BINARY_DIR}
 )
 
 # Installation
@@ -181,5 +194,48 @@ if(WIN32)
     # Copy Qt DLLs on Windows
     set(CMAKE_INSTALL_SYSTEM_RUNTIME_DESTINATION bin)
     include(InstallRequiredSystemLibraries)
+endif()
+
+# GoogleTest for unit testing (optional)
+if(EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_libtxd.cpp)
+    include(FetchContent)
+    FetchContent_Declare(
+      googletest
+      GIT_REPOSITORY https://github.com/google/googletest.git
+      GIT_TAG v1.14.0
+    )
+    # For Windows: Prevent overriding the parent project's compiler/linker settings
+    set(gtest_force_shared_crt ON CACHE BOOL "" FORCE)
+    FetchContent_MakeAvailable(googletest)
+
+    # Enable testing
+    enable_testing()
+
+    # Test executable
+    add_executable(txd_tests
+        tests/test_libtxd.cpp
+    )
+
+    target_link_libraries(txd_tests PRIVATE
+        libtxd
+        GTest::gtest
+        GTest::gtest_main
+        GTest::gmock
+    )
+
+    # Link filesystem library for GCC on Linux (needed for std::filesystem)
+    # Note: Clang on macOS includes filesystem in the standard library
+    if(CMAKE_CXX_COMPILER_ID MATCHES "GNU" AND NOT APPLE)
+        target_link_libraries(txd_tests PRIVATE stdc++fs)
+    endif()
+
+    # Add test directory to include path
+    target_include_directories(txd_tests PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}
+    )
+
+    # Register tests with CTest
+    include(GoogleTest)
+    gtest_discover_tests(txd_tests)
 endif()
 
