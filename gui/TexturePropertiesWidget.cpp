@@ -1,5 +1,6 @@
 #include "TexturePropertiesWidget.h"
 #include "libtxd/txd_converter.h"
+#include "TXDModel.h"
 #include <QFormLayout>
 #include <QLabel>
 #include <QIntValidator>
@@ -7,7 +8,7 @@
 #include <cstring>
 
 TexturePropertiesWidget::TexturePropertiesWidget(QWidget *parent)
-    : QWidget(parent), currentTexture(nullptr) {
+    : QWidget(parent), currentEntry(nullptr) {
     QVBoxLayout* mainLayout = new QVBoxLayout(this);
     mainLayout->setContentsMargins(0, 0, 0, 0);
     
@@ -117,18 +118,19 @@ TexturePropertiesWidget::TexturePropertiesWidget(QWidget *parent)
     
     // Connect format/compression changes
     connect(formatCombo, QOverload<int>::of(&QComboBox::currentIndexChanged), [this]() {
-        if (currentTexture) {
+        if (currentEntry) {
             LibTXD::RasterFormat format = static_cast<LibTXD::RasterFormat>(formatCombo->currentData().toUInt());
-            currentTexture->setRasterFormat(format);
+            // Note: TextureEntry doesn't have setRasterFormat yet - it's set via setMetadata
+            // For now, format changes are read-only
             // Don't emit propertyChanged for format changes
             // Raster format is metadata for saving, not for display
         }
     });
     
     connect(compressionCombo, QOverload<int>::of(&QComboBox::currentIndexChanged), [this]() {
-        if (currentTexture) {
+        if (currentEntry) {
             LibTXD::Compression comp = static_cast<LibTXD::Compression>(compressionCombo->currentData().toInt());
-            currentTexture->setCompression(comp);
+            currentEntry->setCompression(comp);
             // Don't emit propertyChanged for compression-only changes
             // Compression is metadata for saving, not for display
         }
@@ -214,8 +216,8 @@ TexturePropertiesWidget::TexturePropertiesWidget(QWidget *parent)
     // Connect flag changes
     // Note: libtxd only has filterFlags as a single uint32_t, not separate wrap flags
     connect(filterCombo, QOverload<int>::of(&QComboBox::currentIndexChanged), [this]() {
-        if (currentTexture) {
-            currentTexture->setFilterFlags(filterCombo->currentData().toUInt());
+        if (currentEntry) {
+            currentEntry->setFilterFlags(filterCombo->currentData().toUInt());
             // Don't emit propertyChanged for filter changes
             // Filter is metadata for rendering, not for display
         }
@@ -240,9 +242,9 @@ TexturePropertiesWidget::TexturePropertiesWidget(QWidget *parent)
     clear();
 }
 
-void TexturePropertiesWidget::setTexture(LibTXD::Texture* texture) {
-    currentTexture = texture;
-    if (texture) {
+void TexturePropertiesWidget::setTexture(TextureEntry* entry) {
+    currentEntry = entry;
+    if (entry) {
         // Show all groups when texture is set
         basicGroup->show();
         formatGroup->show();
@@ -252,7 +254,7 @@ void TexturePropertiesWidget::setTexture(LibTXD::Texture* texture) {
 }
 
 void TexturePropertiesWidget::clear() {
-    currentTexture = nullptr;
+    currentEntry = nullptr;
     blockSignals(true);
     
     nameEdit->clear();
@@ -280,7 +282,7 @@ void TexturePropertiesWidget::clear() {
 }
 
 void TexturePropertiesWidget::updateUI() {
-    if (!currentTexture) {
+    if (!currentEntry) {
         clear();
         return;
     }
@@ -296,24 +298,18 @@ void TexturePropertiesWidget::updateUI() {
     formatGroup->setEnabled(true);
     flagsGroup->setEnabled(true);
     
-    nameEdit->setText(QString::fromStdString(currentTexture->getName()));
-    alphaNameEdit->setText(QString::fromStdString(currentTexture->getMaskName()));
+    nameEdit->setText(currentEntry->getName());
+    alphaNameEdit->setText(currentEntry->getMaskName());
     
-    // Get dimensions from first mipmap
-    if (currentTexture->getMipmapCount() > 0) {
-        const auto& mipmap = currentTexture->getMipmap(0);
-        widthEdit->setText(QString::number(mipmap.width));
-        heightEdit->setText(QString::number(mipmap.height));
-    } else {
-        widthEdit->setText("0");
-        heightEdit->setText("0");
-    }
+    // Get dimensions from entry
+    widthEdit->setText(QString::number(currentEntry->getWidth()));
+    heightEdit->setText(QString::number(currentEntry->getHeight()));
     
-    mipmapEdit->setText(QString::number(currentTexture->getMipmapCount()));
-    alphaCheck->setChecked(currentTexture->hasAlpha());
+    mipmapEdit->setText(QString::number(currentEntry->getMipmapCount()));
+    alphaCheck->setChecked(currentEntry->hasAlpha());
     
     // Set format combo
-    LibTXD::RasterFormat format = currentTexture->getRasterFormat();
+    LibTXD::RasterFormat format = currentEntry->getRasterFormat();
     for (int i = 0; i < formatCombo->count(); i++) {
         if (formatCombo->itemData(i).toUInt() == static_cast<uint32_t>(format)) {
             formatCombo->setCurrentIndex(i);
@@ -322,7 +318,7 @@ void TexturePropertiesWidget::updateUI() {
     }
     
     // Set compression combo
-    LibTXD::Compression comp = currentTexture->getCompression();
+    LibTXD::Compression comp = currentEntry->getCompression();
     for (int i = 0; i < compressionCombo->count(); i++) {
         if (compressionCombo->itemData(i).toInt() == static_cast<int>(comp)) {
             compressionCombo->setCurrentIndex(i);
@@ -331,7 +327,7 @@ void TexturePropertiesWidget::updateUI() {
     }
     
     // Set filter
-    uint32_t filter = currentTexture->getFilterFlags();
+    uint32_t filter = currentEntry->getFilterFlags();
     for (int i = 0; i < filterCombo->count(); i++) {
         if (filterCombo->itemData(i).toUInt() == filter) {
             filterCombo->setCurrentIndex(i);
@@ -362,103 +358,43 @@ void TexturePropertiesWidget::blockSignals(bool block) {
 }
 
 void TexturePropertiesWidget::onNameChanged() {
-    if (currentTexture) {
-        currentTexture->setName(nameEdit->text().toStdString());
+    if (currentEntry) {
+        currentEntry->setName(nameEdit->text());
         emit propertyChanged();
     }
 }
 
 void TexturePropertiesWidget::onAlphaNameChanged() {
-    if (currentTexture) {
-        currentTexture->setMaskName(alphaNameEdit->text().toStdString());
+    if (currentEntry) {
+        currentEntry->setMaskName(alphaNameEdit->text());
         emit propertyChanged();
     }
 }
 
 
 void TexturePropertiesWidget::onMipmapCountChanged() {
-    if (currentTexture) {
+    if (currentEntry) {
         bool ok;
         int value = mipmapEdit->text().toInt(&ok);
         if (ok && value >= 1 && value <= 16) {
             // Note: libtxd doesn't have setMipmapCount - mipmaps are managed individually
             // This is read-only for now - user can't change mipmap count
-            mipmapEdit->setText(QString::number(currentTexture->getMipmapCount()));
+            mipmapEdit->setText(QString::number(currentEntry->getMipmapCount()));
         } else {
             // Revert to current value
-            mipmapEdit->setText(QString::number(currentTexture->getMipmapCount()));
+            mipmapEdit->setText(QString::number(currentEntry->getMipmapCount()));
         }
     }
 }
 
 void TexturePropertiesWidget::onAlphaChannelToggled(bool enabled) {
-    if (!currentTexture || currentTexture->getMipmapCount() == 0) {
+    if (!currentEntry) {
         return;
     }
     
-    if (enabled) {
-        bool needsReset = false;
-        bool hadAlphaBefore = currentTexture->hasAlpha();
-        
-        if (!hadAlphaBefore) {
-            // Case 1: Texture never had alpha before
-            needsReset = true;
-        } else {
-            // Case 2: Check if existing alpha resolution matches diffuse resolution
-            // In libtxd, alpha and diffuse are in the same mipmap, so they should always match
-            // But we check to be safe - if conversion fails, reset to white
-            const auto& mipmap = currentTexture->getMipmap(0);
-            auto existingRGBA = LibTXD::TextureConverter::convertToRGBA8(*currentTexture, 0);
-            if (!existingRGBA) {
-                // Can't verify alpha, reset to white
-                needsReset = true;
-            }
-            // If alpha exists and conversion succeeds, alpha should match diffuse (same mipmap)
-            // So we don't need to reset in this case
-        }
-        
-        if (needsReset) {
-            // Reset alpha to white (#ffffff)
-            const auto& mipmap = currentTexture->getMipmap(0);
-            auto rgbaData = LibTXD::TextureConverter::convertToRGBA8(*currentTexture, 0);
-            
-            if (rgbaData) {
-                size_t dataSize = mipmap.width * mipmap.height * 4;
-                std::vector<uint8_t> newTextureData(dataSize);
-                std::memcpy(newTextureData.data(), rgbaData.get(), dataSize);
-                
-                // Set all alpha channels to white (255)
-                for (size_t i = 3; i < dataSize; i += 4) {
-                    newTextureData[i] = 255;
-                }
-                
-                // Update texture data
-                LibTXD::Compression compression = currentTexture->getCompression();
-                if (compression != LibTXD::Compression::NONE) {
-                    auto compressedData = LibTXD::TextureConverter::compressToDXT(newTextureData.data(), mipmap.width, mipmap.height, compression, 1.0f);
-                    if (compressedData) {
-                        size_t compressedSize = LibTXD::TextureConverter::getCompressedDataSize(mipmap.width, mipmap.height, compression);
-                        auto& mip = currentTexture->getMipmap(0);
-                        mip.data.assign(compressedData.get(), compressedData.get() + compressedSize);
-                        mip.dataSize = compressedSize;
-                    } else {
-                        // Fallback to uncompressed
-                        currentTexture->setCompression(LibTXD::Compression::NONE);
-                        auto& mip = currentTexture->getMipmap(0);
-                        mip.data = newTextureData;
-                        mip.dataSize = dataSize;
-                    }
-                } else {
-                    // Uncompressed - update mipmap data directly
-                    auto& mip = currentTexture->getMipmap(0);
-                    mip.data = newTextureData;
-                    mip.dataSize = dataSize;
-                }
-            }
-        }
-    }
-    
-    currentTexture->setHasAlpha(enabled);
+    // TextureEntry::setHasAlpha() handles updating raw data and preview automatically
+    // It will check if DXT1->DXT3 upgrade is needed and reset alpha to white if needed
+    currentEntry->setHasAlpha(enabled);
     emit propertyChanged();
 }
 

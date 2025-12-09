@@ -31,9 +31,42 @@
 #include <cstring>
 
 MainWindow::MainWindow(QWidget *parent)
-    : QMainWindow(parent), selectedTextureIndex(-1) {
+    : QMainWindow(parent), model(new TXDModel(this)), selectedTextureIndex(-1) {
     setupMenus();  // Create actions first
     setupUI();     // Then setup UI which uses those actions
+    
+    // Connect model signals
+    connect(model, &TXDModel::modelChanged, this, &MainWindow::updateTextureList);
+    connect(model, &TXDModel::textureAdded, this, [this](size_t index) {
+        updateTextureList();
+        if (static_cast<int>(index) == selectedTextureIndex) {
+            updateTexturePreview();
+            updateTextureProperties();
+        }
+    });
+    connect(model, &TXDModel::textureRemoved, this, [this](size_t index) {
+        if (selectedTextureIndex >= static_cast<int>(index)) {
+            if (selectedTextureIndex == static_cast<int>(index)) {
+                selectedTextureIndex = -1;
+                updateTexturePreview();
+                updateTextureProperties();
+            } else {
+                selectedTextureIndex--;
+            }
+        }
+        updateTextureList();
+    });
+    connect(model, &TXDModel::textureUpdated, this, [this](size_t index) {
+        if (static_cast<int>(index) == selectedTextureIndex) {
+            updateTexturePreview();
+            updateTextureProperties();
+        }
+        updateTextureList();
+    });
+    connect(model, &TXDModel::modifiedChanged, this, [this](bool modified) {
+        updateWindowTitle();
+    });
+    
     clearUI();
 }
 
@@ -908,7 +941,7 @@ void MainWindow::setupMenus() {
 void MainWindow::newFile() {
     
     // Check if there's a current file open
-    if (archive) {
+    if (model->getTextureCount() > 0 || !model->getFilePath().isEmpty()) {
         int ret = QMessageBox::question(this, "New File",
             "Creating a new file will close the current file. Do you want to save the current file first?",
             QMessageBox::Save | QMessageBox::Discard | QMessageBox::Cancel);
@@ -917,13 +950,13 @@ void MainWindow::newFile() {
             return; // User cancelled
         } else if (ret == QMessageBox::Save) {
             // Try to save
-            if (!currentFile.isEmpty()) {
+            if (!model->getFilePath().isEmpty()) {
                 saveFile();
             } else {
                 saveAsFile();
             }
             // If save was cancelled, don't create new file
-            if (archive && !currentFile.isEmpty()) {
+            if (model->getTextureCount() > 0 && !model->getFilePath().isEmpty()) {
                 return;
             }
         }
@@ -940,8 +973,8 @@ void MainWindow::newFile() {
         return; // Invalid selection
     }
     
-    // Create new empty TXD archive
-    archive = std::make_unique<LibTXD::TextureDictionary>();
+    // Create new empty TXD model
+    model->clear();
     // Set version based on game version
     uint32_t version = 0x1803FFFF; // Default to SA
     if (selectedVersion == LibTXD::GameVersion::GTA3_1 || selectedVersion == LibTXD::GameVersion::GTA3_4) {
@@ -949,8 +982,8 @@ void MainWindow::newFile() {
     } else if (selectedVersion == LibTXD::GameVersion::VC_PC) {
         version = 0x1003FFFF;
     }
-    archive->setVersion(version);
-    currentFile.clear();
+    // Note: version will be set when saving, for now just clear
+    model->setFilePath(QString());
     
     // Update UI
     clearUI();
@@ -999,13 +1032,13 @@ void MainWindow::openFile() {
     
     if (!filepath.isEmpty()) {
         if (loadTXD(filepath)) {
-            currentFile = filepath;
-            setWindowTitle("TXD Edit by VPZ - " + QFileInfo(filepath).fileName());
+            model->setFilePath(filepath);
+            updateWindowTitle();
             if (statusFileLabel) {
                 statusFileLabel->setText("File: " + QFileInfo(filepath).fileName());
             }
-            if (statusTextureLabel && archive) {
-                statusTextureLabel->setText(QString("Textures: %1").arg(archive->getTextureCount()));
+            if (statusTextureLabel) {
+                statusTextureLabel->setText(QString("Textures: %1").arg(model->getTextureCount()));
             }
             updateGameVersionDisplay();
             setStatusMessage("Path: " + filepath);
@@ -1030,15 +1063,17 @@ void MainWindow::openFile() {
 }
 
 void MainWindow::saveFile() {
-    if (!archive) {
+    if (model->getTextureCount() == 0 && model->getFilePath().isEmpty()) {
         QMessageBox::warning(this, "No File", "No file is currently open.");
         return;
     }
     
-    if (currentFile.isEmpty()) {
+    QString filepath = model->getFilePath();
+    if (filepath.isEmpty()) {
         saveAsFile();
     } else {
-        if (saveTXD(currentFile)) {
+        if (saveTXD(filepath)) {
+            model->setModified(false);
             setStatusMessage("File saved successfully");
         }
     }
@@ -1046,13 +1081,14 @@ void MainWindow::saveFile() {
 
 void MainWindow::saveAsFile() {
     QString filepath = QFileDialog::getSaveFileName(
-        this, "Save TXD File", currentFile, "TXD Files (*.txd);;All Files (*)"
+        this, "Save TXD File", model->getFilePath(), "TXD Files (*.txd);;All Files (*)"
     );
     
     if (!filepath.isEmpty()) {
         if (saveTXD(filepath)) {
-            currentFile = filepath;
-            setWindowTitle("TXD Edit by VPZ - " + QFileInfo(filepath).fileName());
+            model->setFilePath(filepath);
+            model->setModified(false);
+            updateWindowTitle();
             if (statusFileLabel) {
                 statusFileLabel->setText("File: " + QFileInfo(filepath).fileName());
             }
@@ -1062,11 +1098,10 @@ void MainWindow::saveAsFile() {
 }
 
 void MainWindow::closeFile() {
-    if (archive) {
-        archive.reset();
-        currentFile.clear();
+    if (model->getTextureCount() > 0 || !model->getFilePath().isEmpty()) {
+        model->clear();
         clearUI();
-        setWindowTitle("TXD Edit by VPZ");
+        updateWindowTitle();
         if (statusFileLabel) {
             statusFileLabel->setText("File: None");
         }
@@ -1113,14 +1148,14 @@ void MainWindow::showAbout() {
 }
 
 void MainWindow::updateGameVersionDisplay() {
-    if (!archive || !statusGameLabel) {
+    if (!statusGameLabel || model->getTextureCount() == 0) {
         if (statusGameLabel) {
             statusGameLabel->setText("");
         }
         return;
     }
     
-    LibTXD::GameVersion gameVersion = archive->getGameVersion();
+    LibTXD::GameVersion gameVersion = model->getGameVersion();
     QString gameName;
     QString color;
     
@@ -1150,32 +1185,39 @@ void MainWindow::updateGameVersionDisplay() {
     statusGameLabel->setText(QString("<span style='color: %1; font-weight: bold;'>%2</span>").arg(color, gameName));
 }
 
+void MainWindow::updateWindowTitle() {
+    QString title = "TXD Edit by VPZ";
+    QString filepath = model->getFilePath();
+    if (!filepath.isEmpty()) {
+        title += " - " + QFileInfo(filepath).fileName();
+    }
+    if (model->isModified()) {
+        title += " *";
+    }
+    setWindowTitle(title);
+}
+
 bool MainWindow::loadTXD(const QString& filepath) {
-    archive = std::make_unique<LibTXD::TextureDictionary>();
-    if (!archive->load(filepath.toStdString())) {
+    if (!model->loadFromFile(filepath)) {
         QMessageBox::critical(this, "Error", 
             QString("Failed to load TXD file:\n%1").arg(filepath));
-        archive.reset();
         return false;
     }
     updateTextureList();
-    if (statusTextureLabel && archive) {
-        statusTextureLabel->setText(QString("Textures: %1").arg(archive->getTextureCount()));
+    if (statusTextureLabel) {
+        statusTextureLabel->setText(QString("Textures: %1").arg(model->getTextureCount()));
     }
     updateGameVersionDisplay();
-    setStatusMessage(QString("Loaded %1 textures").arg(archive->getTextureCount()));
+    setStatusMessage(QString("Loaded %1 textures").arg(model->getTextureCount()));
     return true;
 }
 
 bool MainWindow::saveTXD(const QString& filepath) {
-    if (!archive) {
+    if (model->getTextureCount() == 0) {
         return false;
     }
     
-    // Note: libtxd doesn't support dimension resizing on save like the old API
-    // Textures are saved as-is with their current mipmap data
-    
-    if (!archive->save(filepath.toStdString())) {
+    if (!model->saveToFile(filepath)) {
         QMessageBox::critical(this, "Error", 
             QString("Failed to save TXD file:\n%1").arg(filepath));
         setStatusMessage("Save failed");
@@ -1199,7 +1241,7 @@ void MainWindow::updateTextureList() {
     
     textureList->clearTextures();
     
-    if (!archive || archive->getTextureCount() == 0) {
+    if (!model || model->getTextureCount() == 0) {
         // Show placeholder, hide list
         if (placeholderWidget) placeholderWidget->show();
         textureList->hide();
@@ -1208,7 +1250,7 @@ void MainWindow::updateTextureList() {
         previewWidget->clear();
         propertiesWidget->clear();
         // Update button states and status bar
-        if (addBtn) addBtn->setEnabled(archive != nullptr); // Enable if file is open
+        if (addBtn) addBtn->setEnabled(model != nullptr); // Enable if file is open
         if (removeBtn) removeBtn->setEnabled(false); // Disable if no texture selected
         if (statusTextureLabel) {
             statusTextureLabel->setText("Textures: 0");
@@ -1220,18 +1262,32 @@ void MainWindow::updateTextureList() {
     if (placeholderWidget) placeholderWidget->hide();
     textureList->show();
     
-    for (size_t i = 0; i < archive->getTextureCount(); i++) {
-        const LibTXD::Texture* texture = archive->getTexture(i);
-        if (texture && texture->getMipmapCount() > 0) {
-            const auto& mipmap = texture->getMipmap(0);
-            if (!mipmap.data.empty()) {
-                textureList->addTexture(texture, mipmap.data.data(), static_cast<int>(i));
+    for (size_t i = 0; i < model->getTextureCount(); i++) {
+        TextureEntry* entry = model->getTexture(i);
+        if (entry) {
+            // Use preview pixmap from model
+            const QPixmap& preview = entry->getPreviewPixmap();
+            if (!preview.isNull()) {
+                // Create temporary texture for compatibility (will update widgets later)
+                // For now, just add using the preview pixmap
+                QString info = QString("Name: %1\nSize: %2x%3px\nHas alpha: %4\nCompression: %5")
+                    .arg(entry->getName())
+                    .arg(entry->getWidth())
+                    .arg(entry->getHeight())
+                    .arg(entry->hasAlpha() ? "Y" : "N")
+                    .arg(entry->getCompression() == LibTXD::Compression::DXT1 ? "DXT1" :
+                         entry->getCompression() == LibTXD::Compression::DXT3 ? "DXT3" : "None");
+                
+                QListWidgetItem* item = new QListWidgetItem(info, textureList);
+                item->setIcon(QIcon(preview.scaled(32, 32, Qt::KeepAspectRatio, Qt::SmoothTransformation)));
+                item->setData(Qt::UserRole, static_cast<int>(i));
+                item->setSizeHint(QSize(item->sizeHint().width(), 80));
             }
         }
     }
     
     // Restore selection if it was valid, otherwise select first texture
-    if (preservedIndex >= 0 && preservedIndex < static_cast<int>(archive->getTextureCount())) {
+    if (preservedIndex >= 0 && preservedIndex < static_cast<int>(model->getTextureCount())) {
         // Find the item with the preserved index
         for (int i = 0; i < textureList->count(); i++) {
             QListWidgetItem* item = textureList->item(i);
@@ -1248,9 +1304,9 @@ void MainWindow::updateTextureList() {
     }
     
     // Update button states and status bar
-    if (addBtn) addBtn->setEnabled(archive != nullptr); // Enable if file is open
-    if (statusTextureLabel && archive) {
-        statusTextureLabel->setText(QString("Textures: %1").arg(archive->getTextureCount()));
+    if (addBtn) addBtn->setEnabled(model != nullptr); // Enable if file is open
+    if (statusTextureLabel) {
+        statusTextureLabel->setText(QString("Textures: %1").arg(model->getTextureCount()));
     }
     // removeBtn state will be updated by onTextureSelected
 }
@@ -1307,38 +1363,58 @@ void MainWindow::onTextureSelected(int index) {
 }
 
 void MainWindow::updateTexturePreview() {
-    if (!archive || selectedTextureIndex < 0) {
+    if (!model || selectedTextureIndex < 0) {
         previewWidget->clear();
         return;
     }
     
-    const LibTXD::Texture* texture = archive->getTexture(selectedTextureIndex);
-    if (!texture || texture->getMipmapCount() == 0) {
+    TextureEntry* entry = model->getTexture(selectedTextureIndex);
+    if (!entry) {
         previewWidget->clear();
         return;
     }
     
-    const auto& mipmap = texture->getMipmap(0);
-    if (mipmap.data.empty()) {
+    // Use preview pixmap from model (already merged RGBA)
+    const QPixmap& preview = entry->getPreviewPixmap();
+    if (preview.isNull()) {
         previewWidget->clear();
         return;
     }
     
-    // Use mipmap dimensions as original dimensions
-    previewWidget->setTexture(texture, mipmap.data.data(), mipmap.width, mipmap.height);
+    // For now, create a temporary texture for compatibility
+    // TODO: Update TexturePreviewWidget to work directly with QPixmap
+    // For now, we'll need to convert back - but this is temporary
+    // The preview widget should be updated to accept TextureEntry or QPixmap directly
+    LibTXD::Texture tempTexture;
+    tempTexture.setName(entry->getName().toStdString());
+    tempTexture.setRasterFormat(entry->getRasterFormat());
+    tempTexture.setCompression(entry->getCompression());
+    tempTexture.setHasAlpha(entry->hasAlpha());
+    
+    if (!entry->getRawData().empty()) {
+        LibTXD::MipmapLevel mipmap;
+        mipmap.width = entry->getWidth();
+        mipmap.height = entry->getHeight();
+        mipmap.data = entry->getRawData();
+        mipmap.dataSize = mipmap.data.size();
+        tempTexture.addMipmap(std::move(mipmap));
+    }
+    
+    const auto& mipmap = tempTexture.getMipmap(0);
+    previewWidget->setTexture(&tempTexture, mipmap.data.data(), mipmap.width, mipmap.height);
 }
 
 void MainWindow::updateTextureProperties() {
-    if (!archive || selectedTextureIndex < 0) {
+    if (!model || selectedTextureIndex < 0) {
         propertiesWidget->clear();
         propertiesWidget->hide();
         return;
     }
     
-    LibTXD::Texture* texture = archive->getTexture(selectedTextureIndex);
-    if (texture) {
+    TextureEntry* entry = model->getTexture(selectedTextureIndex);
+    if (entry) {
         propertiesWidget->show();
-        propertiesWidget->setTexture(texture);
+        propertiesWidget->setTexture(entry);
     } else {
         propertiesWidget->clear();
         propertiesWidget->hide();
@@ -1346,12 +1422,13 @@ void MainWindow::updateTextureProperties() {
 }
 
 void MainWindow::onTexturePropertyChanged() {
-    if (!archive || selectedTextureIndex < 0) {
+    if (!model || selectedTextureIndex < 0) {
         return;
     }
     
-    // Properties are updated directly on the texture object in libtxd
-    // No need for applyTextureHeader - changes are immediate
+    // Properties are updated directly on the texture entry in the model
+    // TextureEntry setters handle updating raw data and preview as needed
+    model->setModified(true);
     updateTexturePreview();
     updateTextureList(); // In case name changed
 }
@@ -1375,7 +1452,7 @@ void MainWindow::clearUI() {
 }
 
 void MainWindow::addTexture() {
-    if (!archive) {
+    if (!model) {
         QMessageBox::warning(this, "No File", "Please open or create a TXD file first.");
         return;
     }
@@ -1413,7 +1490,8 @@ void MainWindow::addTexture() {
     QString textureName = fileInfo.baseName();
     
     // Check if texture with this name already exists
-    if (archive->findTexture(textureName.toStdString())) {
+    TextureEntry* existing = model->findTexture(textureName);
+    if (existing) {
         int ret = QMessageBox::question(this, "Texture Exists",
             QString("A texture named '%1' already exists. Replace it?").arg(textureName),
             QMessageBox::Yes | QMessageBox::No);
@@ -1421,12 +1499,13 @@ void MainWindow::addTexture() {
             return;
         }
         // Remove existing texture
-        archive->removeTexture(textureName.toStdString());
+        model->removeTexture(textureName);
     }
     
-    // Create texture header
-    uint16_t width = static_cast<uint16_t>(rgbaImage.width());
-    uint16_t height = static_cast<uint16_t>(rgbaImage.height());
+    // Create texture entry in model
+    uint32_t width = rgbaImage.width();
+    uint32_t height = rgbaImage.height();
+    bool hasAlpha = rgbaImage.hasAlphaChannel();
     
     // Ensure dimensions are valid
     if (width < 1 || width > 4096 || height < 1 || height > 4096) {
@@ -1435,51 +1514,26 @@ void MainWindow::addTexture() {
         return;
     }
     
-    // Check if image has alpha channel
-    bool hasAlpha = rgbaImage.hasAlphaChannel();
+    auto entry = new TextureEntry(model);
+    entry->setMetadata(
+        textureName,
+        QString(), // mask name
+        LibTXD::RasterFormat::B8G8R8A8,
+        hasAlpha ? LibTXD::Compression::DXT3 : LibTXD::Compression::DXT1,
+        width,
+        height,
+        hasAlpha,
+        1, // mipmap count
+        0  // filter flags
+    );
     
-    // Determine compression format: DXT1 for no alpha, DXT3 for alpha
-    LibTXD::Compression compression = hasAlpha ? LibTXD::Compression::DXT3 : LibTXD::Compression::DXT1;
-    
-    // Create texture
-    LibTXD::Texture texture;
-    texture.setName(textureName.toStdString());
-    texture.setPlatform(LibTXD::Platform::D3D9);
-    texture.setRasterFormat(LibTXD::RasterFormat::B8G8R8A8);
-    texture.setDepth(32);
-    texture.setHasAlpha(hasAlpha);
-    texture.setCompression(compression);
-    
-    // Get RGBA data
+    // Get RGBA data and update raw data in model
     const uint8_t* imageData = rgbaImage.constBits();
+    entry->updateRawDataFromRGBA(imageData, width, height, hasAlpha);
     
-    // Compress to DXT format
-    auto compressedData = LibTXD::TextureConverter::compressToDXT(imageData, width, height, compression, 1.0f);
-    if (!compressedData) {
-        QMessageBox::critical(this, "Compression Error", 
-            "Failed to compress texture. Saving as uncompressed.");
-        // Fallback to uncompressed
-        compression = LibTXD::Compression::NONE;
-        texture.setCompression(LibTXD::Compression::NONE);
-        
-        LibTXD::MipmapLevel mipmap;
-        mipmap.width = width;
-        mipmap.height = height;
-        mipmap.dataSize = width * height * 4;
-        mipmap.data.assign(imageData, imageData + mipmap.dataSize);
-        texture.addMipmap(std::move(mipmap));
-    } else {
-        size_t compressedSize = LibTXD::TextureConverter::getCompressedDataSize(width, height, compression);
-        
-        LibTXD::MipmapLevel mipmap;
-        mipmap.width = width;
-        mipmap.height = height;
-        mipmap.dataSize = compressedSize;
-        mipmap.data.assign(compressedData.get(), compressedData.get() + compressedSize);
-        texture.addMipmap(std::move(mipmap));
-    }
-    
-    archive->addTexture(std::move(texture));
+    // Add to model
+    model->addTexture(entry);
+    model->setModified(true);
     
     // Update UI
     updateTextureList();
@@ -1487,7 +1541,7 @@ void MainWindow::addTexture() {
 }
 
 void MainWindow::removeTexture() {
-    if (!archive || selectedTextureIndex < 0) {
+    if (!model || selectedTextureIndex < 0) {
         return;
     }
     
@@ -1496,7 +1550,8 @@ void MainWindow::removeTexture() {
         QMessageBox::Yes | QMessageBox::No);
     
     if (ret == QMessageBox::Yes) {
-        archive->removeTexture(selectedTextureIndex);
+        model->removeTexture(selectedTextureIndex);
+        model->setModified(true);
         selectedTextureIndex = -1;
         propertiesWidget->clear();
         propertiesWidget->hide();
@@ -1508,35 +1563,33 @@ void MainWindow::removeTexture() {
 }
 
 void MainWindow::exportTexture() {
-    if (!archive || selectedTextureIndex < 0) {
+    if (!model || selectedTextureIndex < 0) {
         QMessageBox::warning(this, "No Selection", "Please select a texture to export.");
         return;
     }
     
-    const LibTXD::Texture* texture = archive->getTexture(selectedTextureIndex);
-    if (!texture || texture->getMipmapCount() == 0) {
+    TextureEntry* entry = model->getTexture(selectedTextureIndex);
+    if (!entry) {
         return;
     }
     
-    const auto& mipmap = texture->getMipmap(0);
-    if (mipmap.data.empty()) {
-        QMessageBox::warning(this, "Export Error", "Texture has no data.");
+    // Use preview pixmap from model (already RGBA)
+    const QPixmap& preview = entry->getPreviewPixmap();
+    if (preview.isNull()) {
+        QMessageBox::warning(this, "Export Error", "Texture has no preview data.");
         return;
     }
     
-    // Convert to RGBA8
-    auto rgbaData = LibTXD::TextureConverter::convertToRGBA8(*texture, 0);
-    if (!rgbaData) {
-        QMessageBox::warning(this, "Export Error", "Failed to convert texture to RGBA format.");
+    // Convert QPixmap to QImage for export
+    QImage image = preview.toImage();
+    if (image.isNull()) {
+        QMessageBox::warning(this, "Export Error", "Failed to convert preview to image.");
         return;
     }
     
-    // Create QImage from RGBA data
-    QImage image(rgbaData.get(), mipmap.width, mipmap.height, QImage::Format_RGBA8888);
-    QImage imageCopy = image.copy(); // Make a copy since rgbaData will be freed
-    
-    // Check if texture has alpha channel
-    bool hasAlpha = texture->hasAlpha();
+    // For RGBA data, we can use the image directly
+    QImage rgbaImage = image.convertedTo(QImage::Format_RGBA8888);
+    bool hasAlpha = entry->hasAlpha();
     
     // Determine export type
     enum ExportType { DiffuseOnly, AlphaOnly, Both };
@@ -1571,7 +1624,7 @@ void MainWindow::exportTexture() {
     }
     
     // Get base filename
-    QString baseName = QString::fromStdString(texture->getName());
+    QString baseName = entry->getName();
     if (baseName.isEmpty()) {
         baseName = "texture";
     }
@@ -1586,7 +1639,7 @@ void MainWindow::exportTexture() {
         );
         
         if (!filepath.isEmpty()) {
-            if (imageCopy.save(filepath)) {
+            if (rgbaImage.save(filepath)) {
                 setStatusMessage("Diffuse texture exported: " + filepath);
             } else {
                 QMessageBox::critical(this, "Export Error", "Failed to save image file.");
@@ -1595,7 +1648,7 @@ void MainWindow::exportTexture() {
         }
     } else if (exportType == AlphaOnly) {
         // Export alpha channel as grayscale
-        QImage alphaImage = imageCopy.copy();
+        QImage alphaImage = rgbaImage.copy();
         int width = alphaImage.width();
         int height = alphaImage.height();
         
@@ -1631,12 +1684,12 @@ void MainWindow::exportTexture() {
         
         if (!filepath.isEmpty()) {
             // Save diffuse
-            if (imageCopy.save(filepath)) {
+            if (rgbaImage.save(filepath)) {
                 // Save alpha with _alpha suffix
                 QFileInfo fileInfo(filepath);
                 QString alphaPath = fileInfo.path() + "/" + fileInfo.completeBaseName() + "_alpha." + fileInfo.suffix();
                 
-                QImage alphaImage = imageCopy.copy();
+                QImage alphaImage = rgbaImage.copy();
                 int width = alphaImage.width();
                 int height = alphaImage.height();
                 
@@ -1664,7 +1717,7 @@ void MainWindow::exportTexture() {
 }
 
 void MainWindow::importTexture() {
-    if (!archive) {
+    if (!model) {
         QMessageBox::warning(this, "No File", "Please open a TXD file first.");
         return;
     }
@@ -1694,7 +1747,8 @@ void MainWindow::importTexture() {
     QString textureName = fileInfo.baseName();
     
     // Check if texture with this name already exists
-    if (archive->findTexture(textureName.toStdString())) {
+    TextureEntry* existing = model->findTexture(textureName);
+    if (existing) {
         int ret = QMessageBox::question(this, "Texture Exists",
             QString("A texture named '%1' already exists. Replace it?").arg(textureName),
             QMessageBox::Yes | QMessageBox::No);
@@ -1702,65 +1756,35 @@ void MainWindow::importTexture() {
             return;
         }
         // Remove existing texture
-        archive->removeTexture(textureName.toStdString());
+        model->removeTexture(textureName);
     }
     
-    // Create texture header
-    uint16_t width = static_cast<uint16_t>(rgbaImage.width());
-    uint16_t height = static_cast<uint16_t>(rgbaImage.height());
-    
-    // Ensure dimensions are valid
-    if (width < 1 || width > 4096 || height < 1 || height > 4096) {
-        QMessageBox::critical(this, "Import Error", 
-            QString("Invalid image dimensions: %1x%2. Must be between 1x1 and 4096x4096.").arg(width).arg(height));
-        return;
-    }
-    
-    // Check if image has alpha channel
+    // Create texture entry in model
+    uint32_t width = rgbaImage.width();
+    uint32_t height = rgbaImage.height();
     bool hasAlpha = rgbaImage.hasAlphaChannel();
-    
-    // Determine compression format: DXT1 for no alpha, DXT3 for alpha
     LibTXD::Compression compression = hasAlpha ? LibTXD::Compression::DXT3 : LibTXD::Compression::DXT1;
     
-    // Create texture
-    LibTXD::Texture texture;
-    texture.setName(textureName.toStdString());
-    texture.setPlatform(LibTXD::Platform::D3D9);
-    texture.setRasterFormat(LibTXD::RasterFormat::B8G8R8A8);
-    texture.setDepth(32);
-    texture.setHasAlpha(hasAlpha);
-    texture.setCompression(compression);
+    auto entry = new TextureEntry(model);
+    entry->setMetadata(
+        textureName,
+        QString(), // mask name
+        LibTXD::RasterFormat::B8G8R8A8,
+        compression,
+        width,
+        height,
+        hasAlpha,
+        1, // mipmap count
+        0  // filter flags
+    );
     
-    // Get RGBA data
+    // Get RGBA data and update raw data in model
     const uint8_t* imageData = rgbaImage.constBits();
+    entry->updateRawDataFromRGBA(imageData, width, height, hasAlpha);
     
-    // Compress to DXT format
-    auto compressedData = LibTXD::TextureConverter::compressToDXT(imageData, width, height, compression, 1.0f);
-    if (!compressedData) {
-        QMessageBox::critical(this, "Compression Error", 
-            "Failed to compress texture. Saving as uncompressed.");
-        // Fallback to uncompressed
-        compression = LibTXD::Compression::NONE;
-        texture.setCompression(LibTXD::Compression::NONE);
-        
-        LibTXD::MipmapLevel mipmap;
-        mipmap.width = width;
-        mipmap.height = height;
-        mipmap.dataSize = width * height * 4;
-        mipmap.data.assign(imageData, imageData + mipmap.dataSize);
-        texture.addMipmap(std::move(mipmap));
-    } else {
-        size_t compressedSize = LibTXD::TextureConverter::getCompressedDataSize(width, height, compression);
-        
-        LibTXD::MipmapLevel mipmap;
-        mipmap.width = width;
-        mipmap.height = height;
-        mipmap.dataSize = compressedSize;
-        mipmap.data.assign(compressedData.get(), compressedData.get() + compressedSize);
-        texture.addMipmap(std::move(mipmap));
-    }
-    
-    archive->addTexture(std::move(texture));
+    // Add to model
+    model->addTexture(entry);
+    model->setModified(true);
     
     // Update UI
     updateTextureList();
@@ -1768,12 +1792,12 @@ void MainWindow::importTexture() {
 }
 
 void MainWindow::bulkExport() {
-    if (!archive) {
+    if (!model || model->getTextureCount() == 0) {
         QMessageBox::warning(this, "No File", "Please open a TXD file first.");
         return;
     }
     
-    size_t textureCount = archive->getTextureCount();
+    size_t textureCount = model->getTextureCount();
     if (textureCount == 0) {
         QMessageBox::warning(this, "No Textures", "The current TXD file has no textures to export.");
         return;
@@ -1800,33 +1824,37 @@ void MainWindow::bulkExport() {
     
     // Export all textures
     for (size_t i = 0; i < textureCount; i++) {
-        const LibTXD::Texture* texture = archive->getTexture(i);
-        if (!texture || texture->getMipmapCount() == 0) {
+        TextureEntry* entry = model->getTexture(i);
+        if (!entry) {
             failCount++;
             continue;
         }
         
-        // Convert to RGBA8
-        auto rgbaData = LibTXD::TextureConverter::convertToRGBA8(*texture, 0);
-        if (!rgbaData) {
+        // Use preview pixmap from model
+        const QPixmap& preview = entry->getPreviewPixmap();
+        if (preview.isNull()) {
             failCount++;
             continue;
         }
         
-        const auto& mipmap = texture->getMipmap(0);
-        // Create QImage from RGBA data
-        QImage image(rgbaData.get(), mipmap.width, mipmap.height, QImage::Format_RGBA8888);
-        QImage imageCopy = image.copy(); // Make a copy since rgbaData will be freed
+        // Convert QPixmap to QImage
+        QImage image = preview.toImage();
+        if (image.isNull()) {
+            failCount++;
+            continue;
+        }
+        
+        QImage rgbaImage = image.convertedTo(QImage::Format_RGBA8888);
         
         // Get base filename
-        QString baseName = QString::fromStdString(texture->getName());
+        QString baseName = entry->getName();
         if (baseName.isEmpty()) {
             baseName = QString("texture_%1").arg(i);
         }
         
         // Export diffuse
         QString diffusePath = folderPath + baseName + ".png";
-        if (imageCopy.save(diffusePath)) {
+        if (rgbaImage.save(diffusePath)) {
             successCount++;
         } else {
             failCount++;
@@ -1834,9 +1862,9 @@ void MainWindow::bulkExport() {
         }
         
         // Export alpha if texture has alpha channel
-        bool hasAlpha = texture->hasAlpha();
+        bool hasAlpha = entry->hasAlpha();
         if (hasAlpha) {
-            QImage alphaImage = imageCopy.copy();
+            QImage alphaImage = rgbaImage.copy();
             int width = alphaImage.width();
             int height = alphaImage.height();
             
@@ -1899,14 +1927,14 @@ void MainWindow::onImportRequested(int index) {
 }
 
 void MainWindow::onReplaceDiffuseRequested(int index) {
-    if (!archive || index < 0 || index >= static_cast<int>(archive->getTextureCount())) {
+    if (!model || index < 0 || index >= static_cast<int>(model->getTextureCount())) {
         QMessageBox::warning(this, "Invalid Index", "Invalid texture index.");
         return;
     }
     
-    LibTXD::Texture* texture = archive->getTexture(index);
-    if (!texture || texture->getMipmapCount() == 0) {
-        QMessageBox::warning(this, "Error", "Failed to get texture or texture has no mipmaps.");
+    TextureEntry* entry = model->getTexture(index);
+    if (!entry) {
+        QMessageBox::warning(this, "Error", "Failed to get texture entry.");
         return;
     }
     
@@ -1930,24 +1958,23 @@ void MainWindow::onReplaceDiffuseRequested(int index) {
     // Convert to RGBA8888 if needed
     QImage rgbaImage = image.convertedTo(QImage::Format_RGBA8888);
     
-    auto& mipmap = texture->getMipmap(0);
-    uint32_t oldWidth = mipmap.width;
-    uint32_t oldHeight = mipmap.height;
-    bool hadAlpha = texture->hasAlpha();
+    uint32_t oldWidth = entry->getWidth();
+    uint32_t oldHeight = entry->getHeight();
+    bool hadAlpha = entry->hasAlpha();
     
     // Store original imported image dimensions (before any resizing)
     int importedWidth = rgbaImage.width();
     int importedHeight = rgbaImage.height();
     
     // Check dimensions match
-    if (rgbaImage.width() != static_cast<int>(mipmap.width) || rgbaImage.height() != static_cast<int>(mipmap.height)) {
+    if (rgbaImage.width() != static_cast<int>(oldWidth) || rgbaImage.height() != static_cast<int>(oldHeight)) {
         int ret = QMessageBox::question(this, "Dimension Mismatch",
             QString("The image dimensions (%1x%2) don't match the texture dimensions (%3x%4).\n"
                     "Resize the image to match?").arg(rgbaImage.width()).arg(rgbaImage.height())
-                    .arg(mipmap.width).arg(mipmap.height),
+                    .arg(oldWidth).arg(oldHeight),
             QMessageBox::Yes | QMessageBox::No);
         if (ret == QMessageBox::Yes) {
-            rgbaImage = rgbaImage.scaled(mipmap.width, mipmap.height, 
+            rgbaImage = rgbaImage.scaled(oldWidth, oldHeight, 
                                         Qt::IgnoreAspectRatio, Qt::SmoothTransformation);
         } else {
             return;
@@ -1963,18 +1990,34 @@ void MainWindow::onReplaceDiffuseRequested(int index) {
                                      importedHeight != static_cast<int>(oldHeight));
     bool needsAlphaReset = hadAlpha && importedDimensionsDiffer;
     
-    // Convert existing texture to RGBA8 to preserve alpha if needed
-    auto existingRGBA = LibTXD::TextureConverter::convertToRGBA8(*texture, 0);
+    // Check if dimensions changed after optional resize
+    bool dimensionsChanged = (rgbaImage.width() != static_cast<int>(oldWidth) || 
+                              rgbaImage.height() != static_cast<int>(oldHeight));
     
-    // Update mipmap dimensions if they changed (after user chose to resize)
-    if (dimensionsChanged) {
-        mipmap.width = rgbaImage.width();
-        mipmap.height = rgbaImage.height();
+    // Get existing RGBA data to preserve alpha if needed
+    // Create temp texture for conversion
+    LibTXD::Texture tempTexture;
+    tempTexture.setName(entry->getName().toStdString());
+    tempTexture.setRasterFormat(entry->getRasterFormat());
+    tempTexture.setCompression(entry->getCompression());
+    tempTexture.setHasAlpha(entry->hasAlpha());
+    
+    if (!entry->getRawData().empty()) {
+        LibTXD::MipmapLevel mipmap;
+        mipmap.width = oldWidth;
+        mipmap.height = oldHeight;
+        mipmap.data = entry->getRawData();
+        mipmap.dataSize = mipmap.data.size();
+        tempTexture.addMipmap(std::move(mipmap));
     }
+    
+    auto existingRGBA = LibTXD::TextureConverter::convertToRGBA8(tempTexture, 0);
     
     // Prepare new texture data
     const uint8_t* imageData = rgbaImage.constBits();
-    size_t dataSize = mipmap.width * mipmap.height * 4;
+    uint32_t newWidth = rgbaImage.width();
+    uint32_t newHeight = rgbaImage.height();
+    size_t dataSize = newWidth * newHeight * 4;
     std::vector<uint8_t> newTextureData(dataSize);
     
     if (hadAlpha && existingRGBA && !dimensionsChanged) {
@@ -1985,7 +2028,7 @@ void MainWindow::onReplaceDiffuseRequested(int index) {
             newTextureData[i + 2] = imageData[i + 2]; // B
             newTextureData[i + 3] = existingRGBA[i + 3]; // A (preserve existing)
         }
-        texture->setHasAlpha(true);
+        entry->setHasAlpha(true);
     } else {
         // Replace everything (including alpha if new image has it)
         std::memcpy(newTextureData.data(), imageData, dataSize);
@@ -1995,33 +2038,17 @@ void MainWindow::onReplaceDiffuseRequested(int index) {
             for (size_t i = 3; i < dataSize; i += 4) {
                 newTextureData[i] = 255; // White alpha
             }
-            texture->setHasAlpha(true); // Keep alpha enabled
+            entry->setHasAlpha(true); // Keep alpha enabled
         } else {
             // Update alpha flag based on new image
             bool newHasAlpha = rgbaImage.hasAlphaChannel();
-            texture->setHasAlpha(newHasAlpha);
+            entry->setHasAlpha(newHasAlpha);
         }
     }
     
-    // Compress if needed
-    LibTXD::Compression compression = texture->getCompression();
-    if (compression != LibTXD::Compression::NONE) {
-        auto compressedData = LibTXD::TextureConverter::compressToDXT(newTextureData.data(), mipmap.width, mipmap.height, compression, 1.0f);
-        if (compressedData) {
-            size_t compressedSize = LibTXD::TextureConverter::getCompressedDataSize(mipmap.width, mipmap.height, compression);
-            mipmap.data.assign(compressedData.get(), compressedData.get() + compressedSize);
-            mipmap.dataSize = compressedSize;
-        } else {
-            // Fallback to uncompressed
-            texture->setCompression(LibTXD::Compression::NONE);
-            mipmap.data = newTextureData;
-            mipmap.dataSize = dataSize;
-        }
-    } else {
-        // Uncompressed - update mipmap data directly
-        mipmap.data = newTextureData;
-        mipmap.dataSize = dataSize;
-    }
+    // Update raw data in model
+    entry->updateRawDataFromRGBA(newTextureData.data(), newWidth, newHeight, entry->hasAlpha());
+    model->setModified(true);
     
     // Update UI
     updateTextureList();
@@ -2030,18 +2057,18 @@ void MainWindow::onReplaceDiffuseRequested(int index) {
         updateTextureProperties();
     }
     
-    setStatusMessage(QString("Replaced diffuse image for texture: %1").arg(QString::fromStdString(texture->getName())));
+    setStatusMessage(QString("Replaced diffuse image for texture: %1").arg(entry->getName()));
 }
 
 void MainWindow::onReplaceAlphaRequested(int index) {
-    if (!archive || index < 0 || index >= static_cast<int>(archive->getTextureCount())) {
+    if (!model || index < 0 || index >= static_cast<int>(model->getTextureCount())) {
         QMessageBox::warning(this, "Invalid Index", "Invalid texture index.");
         return;
     }
     
-    LibTXD::Texture* texture = archive->getTexture(index);
-    if (!texture || texture->getMipmapCount() == 0) {
-        QMessageBox::warning(this, "Error", "Failed to get texture or texture has no mipmaps.");
+    TextureEntry* entry = model->getTexture(index);
+    if (!entry) {
+        QMessageBox::warning(this, "Error", "Failed to get texture entry.");
         return;
     }
     
@@ -2065,37 +2092,52 @@ void MainWindow::onReplaceAlphaRequested(int index) {
     // Convert to RGBA8888 if needed
     QImage rgbaImage = image.convertedTo(QImage::Format_RGBA8888);
     
-    auto& mipmap = texture->getMipmap(0);
+    uint32_t width = entry->getWidth();
+    uint32_t height = entry->getHeight();
     
     // Check dimensions match - if they don't, alert user and cancel (no resize option)
-    if (rgbaImage.width() != static_cast<int>(mipmap.width) || rgbaImage.height() != static_cast<int>(mipmap.height)) {
+    if (rgbaImage.width() != static_cast<int>(width) || rgbaImage.height() != static_cast<int>(height)) {
         QMessageBox::warning(this, "Dimension Mismatch",
             QString("The alpha image dimensions (%1x%2) don't match the diffuse texture dimensions (%3x%4).\n\n"
                    "Alpha channel resolution must match the diffuse resolution.\n"
                    "Operation cancelled.").arg(rgbaImage.width()).arg(rgbaImage.height())
-                   .arg(mipmap.width).arg(mipmap.height));
+                   .arg(width).arg(height));
         return;
     }
     
     // Get existing texture data to preserve RGB
-    auto existingRGBA = LibTXD::TextureConverter::convertToRGBA8(*texture, 0);
+    // Create temp texture for conversion
+    LibTXD::Texture tempTexture;
+    tempTexture.setName(entry->getName().toStdString());
+    tempTexture.setRasterFormat(entry->getRasterFormat());
+    tempTexture.setCompression(entry->getCompression());
+    tempTexture.setHasAlpha(entry->hasAlpha());
+    
+    if (!entry->getRawData().empty()) {
+        LibTXD::MipmapLevel mipmap;
+        mipmap.width = width;
+        mipmap.height = height;
+        mipmap.data = entry->getRawData();
+        mipmap.dataSize = mipmap.data.size();
+        tempTexture.addMipmap(std::move(mipmap));
+    }
+    
+    auto existingRGBA = LibTXD::TextureConverter::convertToRGBA8(tempTexture, 0);
     if (!existingRGBA) {
         QMessageBox::warning(this, "Error", "Failed to get existing texture data.");
         return;
     }
     
     // Prepare new texture data
-    size_t dataSize = mipmap.width * mipmap.height * 4;
+    size_t dataSize = width * height * 4;
     std::vector<uint8_t> newTextureData(dataSize);
     
     const uint8_t* imageData = rgbaImage.constBits();
     
     // Preserve RGB, replace alpha from the new image
     // Use the grayscale value of the new image as alpha
-    int width = rgbaImage.width();
-    int height = rgbaImage.height();
-    for (int y = 0; y < height; y++) {
-        for (int x = 0; x < width; x++) {
+    for (int y = 0; y < static_cast<int>(height); y++) {
+        for (int x = 0; x < static_cast<int>(width); x++) {
             size_t pixelIndex = (y * width + x) * 4;
             
             // Preserve RGB from existing texture
@@ -2119,28 +2161,10 @@ void MainWindow::onReplaceAlphaRequested(int index) {
         }
     }
     
-    // Enable alpha channel
-    texture->setHasAlpha(true);
-    
-    // Compress if needed
-    LibTXD::Compression compression = texture->getCompression();
-    if (compression != LibTXD::Compression::NONE) {
-        auto compressedData = LibTXD::TextureConverter::compressToDXT(newTextureData.data(), mipmap.width, mipmap.height, compression, 1.0f);
-        if (compressedData) {
-            size_t compressedSize = LibTXD::TextureConverter::getCompressedDataSize(mipmap.width, mipmap.height, compression);
-            mipmap.data.assign(compressedData.get(), compressedData.get() + compressedSize);
-            mipmap.dataSize = compressedSize;
-        } else {
-            // Fallback to uncompressed
-            texture->setCompression(LibTXD::Compression::NONE);
-            mipmap.data = newTextureData;
-            mipmap.dataSize = dataSize;
-        }
-    } else {
-        // Uncompressed - update mipmap data directly
-        mipmap.data = newTextureData;
-        mipmap.dataSize = dataSize;
-    }
+    // Update raw data in model
+    entry->updateRawDataFromRGBA(newTextureData.data(), width, height, true); // Always has alpha after replacement
+    entry->setHasAlpha(true);
+    model->setModified(true);
     
     // Update UI
     updateTextureList();
@@ -2149,7 +2173,7 @@ void MainWindow::onReplaceAlphaRequested(int index) {
         updateTextureProperties();
     }
     
-    setStatusMessage(QString("Replaced alpha channel for texture: %1").arg(QString::fromStdString(texture->getName())));
+    setStatusMessage(QString("Replaced alpha channel for texture: %1").arg(entry->getName()));
 }
 
 void MainWindow::onRemoveRequested(int index) {

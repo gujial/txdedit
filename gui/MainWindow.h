@@ -16,8 +16,7 @@
 #include <QPushButton>
 #include <QScrollArea>
 #include <memory>
-#include "libtxd/txd_dictionary.h"
-#include "libtxd/txd_converter.h"
+#include "TXDModel.h"
 
 class TexturePreviewWidget;
 class TexturePropertiesWidget;
@@ -66,13 +65,13 @@ private:
     void clearUI();
     void setStatusMessage(const QString& text);
     void updateGameVersionDisplay();
+    void updateWindowTitle();
     
     bool loadTXD(const QString& filepath);
     bool saveTXD(const QString& filepath);
     QString getIconPath(const QString& iconName) const;
     
-    std::unique_ptr<LibTXD::TextureDictionary> archive;
-    QString currentFile;
+    TXDModel* model;
     int selectedTextureIndex;
     
     // UI Components

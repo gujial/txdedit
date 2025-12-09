@@ -14,15 +14,14 @@
 #include <QListView>
 #include <QIntValidator>
 #include "CheckBox.h"
-#include "libtxd/txd_texture.h"
-#include "libtxd/txd_types.h"
+#include "TXDModel.h"
 
 class TexturePropertiesWidget : public QWidget {
     Q_OBJECT
 
 public:
     explicit TexturePropertiesWidget(QWidget *parent = nullptr);
-    void setTexture(LibTXD::Texture* texture);
+    void setTexture(TextureEntry* entry);
     void clear();
 
 signals:
@@ -38,7 +37,7 @@ private:
     void updateUI();
     void blockSignals(bool block);
     
-    LibTXD::Texture* currentTexture;
+    TextureEntry* currentEntry;
     
     QScrollArea* scrollArea;
     QWidget* contentWidget;

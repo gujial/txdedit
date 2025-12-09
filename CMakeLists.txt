@@ -85,6 +85,8 @@ set(GUI_SOURCES
     gui/main.cpp
     gui/MainWindow.h
     gui/MainWindow.cpp
+    gui/TXDModel.h
+    gui/TXDModel.cpp
     gui/TexturePreviewWidget.h
     gui/TexturePreviewWidget.cpp
     gui/TexturePropertiesWidget.h
