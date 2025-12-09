@@ -21,7 +21,7 @@ class TexturePropertiesWidget : public QWidget {
 
 public:
     explicit TexturePropertiesWidget(QWidget *parent = nullptr);
-    void setTexture(TextureEntry* entry);
+    void setTexture(TXDFileEntry* entry);
     void clear();
 
 signals:
@@ -32,12 +32,13 @@ private slots:
     void onAlphaNameChanged();
     void onMipmapCountChanged();
     void onAlphaChannelToggled(bool enabled);
+    void onCompressionToggled(bool enabled);
 
 private:
     void updateUI();
     void blockSignals(bool block);
     
-    TextureEntry* currentEntry;
+    TXDFileEntry* currentEntry;
     
     QScrollArea* scrollArea;
     QWidget* contentWidget;
@@ -45,14 +46,15 @@ private:
     QGroupBox* basicGroup;
     QLineEdit* nameEdit;
     QLineEdit* alphaNameEdit;
-    QLineEdit* widthEdit;
-    QLineEdit* heightEdit;
+    QLabel* widthLabel;
+    QLabel* heightLabel;
     QLineEdit* mipmapEdit;
     CheckBox* alphaCheck;
     
     QGroupBox* formatGroup;
-    QComboBox* formatCombo;
-    QComboBox* compressionCombo;
+    QLabel* formatLabel;
+    QComboBox* formatCombo;  // Only shown for new textures
+    CheckBox* compressionCheck;
     
     QGroupBox* flagsGroup;
     QComboBox* filterCombo;

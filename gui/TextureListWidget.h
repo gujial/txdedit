@@ -12,6 +12,9 @@
 #include "libtxd/txd_texture.h"
 #include "libtxd/txd_converter.h"
 
+// Forward declaration
+struct TXDFileEntry;
+
 // Custom delegate to align icons to top
 class TextureListItemDelegate : public QStyledItemDelegate {
 public:
@@ -66,8 +69,8 @@ class TextureListWidget : public QListWidget {
 public:
     explicit TextureListWidget(QWidget *parent = nullptr);
     
-    void addTexture(const LibTXD::Texture* texture, const uint8_t* data, int index);
-    void updateTexture(const LibTXD::Texture* texture, const uint8_t* data, int index);
+    void addTexture(const TXDFileEntry* entry, int index);
+    void updateTexture(const TXDFileEntry* entry, int index);
     void clearTextures();
 
 signals:
@@ -81,8 +84,8 @@ protected:
     void contextMenuEvent(QContextMenuEvent* event) override;
 
 private:
-    QString formatTextureInfo(const LibTXD::Texture* texture) const;
-    QPixmap createThumbnail(const LibTXD::Texture* texture, const uint8_t* data) const;
+    QString formatTextureInfo(const TXDFileEntry* entry) const;
+    QPixmap createThumbnail(const uint8_t* rgbaData, int width, int height, bool hasAlpha) const;
 };
 
 #endif // TEXTURELISTWIDGET_H

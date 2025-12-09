@@ -39,19 +39,13 @@ TexturePropertiesWidget::TexturePropertiesWidget(QWidget *parent)
     connect(alphaNameEdit, &QLineEdit::textChanged, this, &TexturePropertiesWidget::onAlphaNameChanged);
     basicLayout->addRow("Alpha name:", alphaNameEdit);
     
-    // Width input field with number validation
-    widthEdit = new QLineEdit(contentWidget);
-    widthEdit->setValidator(new QIntValidator(1, 4096, widthEdit));
-    widthEdit->setText("256");
-    widthEdit->setReadOnly(true); // Read-only: dimensions come from texture data
-    basicLayout->addRow("Width:", widthEdit);
+    // Width label (read-only: dimensions come from texture data)
+    widthLabel = new QLabel("256", contentWidget);
+    basicLayout->addRow("Width:", widthLabel);
     
-    // Height input field with number validation
-    heightEdit = new QLineEdit(contentWidget);
-    heightEdit->setValidator(new QIntValidator(1, 4096, heightEdit));
-    heightEdit->setText("256");
-    heightEdit->setReadOnly(true); // Read-only: dimensions come from texture data
-    basicLayout->addRow("Height:", heightEdit);
+    // Height label (read-only: dimensions come from texture data)
+    heightLabel = new QLabel("256", contentWidget);
+    basicLayout->addRow("Height:", heightLabel);
     
     // Mipmap input field with number validation
     mipmapEdit = new QLineEdit(contentWidget);
@@ -76,6 +70,11 @@ TexturePropertiesWidget::TexturePropertiesWidget(QWidget *parent)
     formatLayout->setContentsMargins(10, 15, 10, 10);
     formatLayout->setFieldGrowthPolicy(QFormLayout::ExpandingFieldsGrow);
     
+    // Format label for existing textures (read-only)
+    formatLabel = new QLabel("", contentWidget);
+    formatLayout->addRow("Raster format:", formatLabel);
+    
+    // Format combo for new textures (editable, though auto-set based on alpha)
     formatCombo = new QComboBox(contentWidget);
     QListView* formatView = new QListView();
     formatView->setSpacing(0);
@@ -97,44 +96,26 @@ TexturePropertiesWidget::TexturePropertiesWidget(QWidget *parent)
         if (width > maxWidth) maxWidth = width;
     }
     formatCombo->view()->setMinimumWidth(maxWidth + 40); // Add padding for borders and scrollbar
-    formatLayout->addRow("Raster format:", formatCombo);
+    formatCombo->hide(); // Hidden by default, shown only for new textures
     
-    compressionCombo = new QComboBox(contentWidget);
-    QListView* compressionView = new QListView();
-    compressionCombo->setView(compressionView);
-    compressionCombo->setEditable(false);
-    compressionCombo->addItem("None", static_cast<int>(LibTXD::Compression::NONE));
-    compressionCombo->addItem("DXT1", static_cast<int>(LibTXD::Compression::DXT1));
-    compressionCombo->addItem("DXT3", static_cast<int>(LibTXD::Compression::DXT3));
-    // Calculate width based on longest item text
-    QFontMetrics fmComp(compressionCombo->font());
-    int maxWidthComp = 0;
-    for (int i = 0; i < compressionCombo->count(); i++) {
-        int width = fmComp.horizontalAdvance(compressionCombo->itemText(i));
-        if (width > maxWidthComp) maxWidthComp = width;
-    }
-    compressionCombo->view()->setMinimumWidth(maxWidthComp + 40);
-    formatLayout->addRow("Compression:", compressionCombo);
+    compressionCheck = new CheckBox("", contentWidget);
+    formatLayout->addRow("Compression:", compressionCheck);
     
     // Connect format/compression changes
+    // Note: Format changes are only allowed for new textures (added by user)
+    // Existing textures keep their original format
     connect(formatCombo, QOverload<int>::of(&QComboBox::currentIndexChanged), [this]() {
-        if (currentEntry) {
-            LibTXD::RasterFormat format = static_cast<LibTXD::RasterFormat>(formatCombo->currentData().toUInt());
-            // Note: TextureEntry doesn't have setRasterFormat yet - it's set via setMetadata
-            // For now, format changes are read-only
+        if (!this || !currentEntry) {
+            return; // Widget or entry is being destroyed
+        }
+        if (currentEntry->isNew) {
+            // Format changes for new textures could be implemented here if needed
+            // For now, format is set automatically based on alpha when texture is added
             // Don't emit propertyChanged for format changes
-            // Raster format is metadata for saving, not for display
         }
     });
     
-    connect(compressionCombo, QOverload<int>::of(&QComboBox::currentIndexChanged), [this]() {
-        if (currentEntry) {
-            LibTXD::Compression comp = static_cast<LibTXD::Compression>(compressionCombo->currentData().toInt());
-            currentEntry->setCompression(comp);
-            // Don't emit propertyChanged for compression-only changes
-            // Compression is metadata for saving, not for display
-        }
-    });
+    connect(compressionCheck, &QCheckBox::toggled, this, &TexturePropertiesWidget::onCompressionToggled);
     
     contentLayout->addWidget(formatGroup);
     
@@ -217,7 +198,7 @@ TexturePropertiesWidget::TexturePropertiesWidget(QWidget *parent)
     // Note: libtxd only has filterFlags as a single uint32_t, not separate wrap flags
     connect(filterCombo, QOverload<int>::of(&QComboBox::currentIndexChanged), [this]() {
         if (currentEntry) {
-            currentEntry->setFilterFlags(filterCombo->currentData().toUInt());
+            currentEntry->filterFlags = filterCombo->currentData().toUInt();
             // Don't emit propertyChanged for filter changes
             // Filter is metadata for rendering, not for display
         }
@@ -242,7 +223,7 @@ TexturePropertiesWidget::TexturePropertiesWidget(QWidget *parent)
     clear();
 }
 
-void TexturePropertiesWidget::setTexture(TextureEntry* entry) {
+void TexturePropertiesWidget::setTexture(TXDFileEntry* entry) {
     currentEntry = entry;
     if (entry) {
         // Show all groups when texture is set
@@ -259,12 +240,18 @@ void TexturePropertiesWidget::clear() {
     
     nameEdit->clear();
     alphaNameEdit->clear();
-    widthEdit->setText("256");
-    heightEdit->setText("256");
+    widthLabel->setText("256");
+    heightLabel->setText("256");
     mipmapEdit->setText("1");
     alphaCheck->setChecked(false);
+    formatLabel->setText("");
+    // Block signals before setting index to avoid triggering handlers during destruction
+    formatCombo->blockSignals(true);
     formatCombo->setCurrentIndex(0);
-    compressionCombo->setCurrentIndex(0);
+    formatCombo->blockSignals(false);
+    formatCombo->hide();
+    formatLabel->hide();
+    compressionCheck->setChecked(false);
     filterCombo->setCurrentIndex(0);
     uWrapCombo->setCurrentIndex(0);
     vWrapCombo->setCurrentIndex(0);
@@ -298,36 +285,54 @@ void TexturePropertiesWidget::updateUI() {
     formatGroup->setEnabled(true);
     flagsGroup->setEnabled(true);
     
-    nameEdit->setText(currentEntry->getName());
-    alphaNameEdit->setText(currentEntry->getMaskName());
+    nameEdit->setText(currentEntry->name);
+    alphaNameEdit->setText(currentEntry->maskName);
     
-    // Get dimensions from entry
-    widthEdit->setText(QString::number(currentEntry->getWidth()));
-    heightEdit->setText(QString::number(currentEntry->getHeight()));
+    // Get dimensions from entry (always read-only, display as label)
+    widthLabel->setText(QString::number(currentEntry->width));
+    heightLabel->setText(QString::number(currentEntry->height));
     
-    mipmapEdit->setText(QString::number(currentEntry->getMipmapCount()));
-    alphaCheck->setChecked(currentEntry->hasAlpha());
+    mipmapEdit->setText(QString::number(currentEntry->mipmapCount));
+    alphaCheck->setChecked(currentEntry->hasAlpha);
     
-    // Set format combo
-    LibTXD::RasterFormat format = currentEntry->getRasterFormat();
-    for (int i = 0; i < formatCombo->count(); i++) {
-        if (formatCombo->itemData(i).toUInt() == static_cast<uint32_t>(format)) {
-            formatCombo->setCurrentIndex(i);
-            break;
-        }
+    // Set format display
+    LibTXD::RasterFormat format = currentEntry->rasterFormat;
+    QString formatText;
+    // Convert format enum to text - mask out flags to get base format
+    uint32_t formatValue = static_cast<uint32_t>(format);
+    uint32_t baseFormat = formatValue & static_cast<uint32_t>(LibTXD::RasterFormat::MASK);
+    
+    if (baseFormat == static_cast<uint32_t>(LibTXD::RasterFormat::B8G8R8A8)) {
+        formatText = "B8G8R8A8";
+    } else if (baseFormat == static_cast<uint32_t>(LibTXD::RasterFormat::B8G8R8)) {
+        formatText = "B8G8R8";
+    } else if (baseFormat == static_cast<uint32_t>(LibTXD::RasterFormat::R5G6B5)) {
+        formatText = "R5G6B5";
+    } else if (baseFormat == static_cast<uint32_t>(LibTXD::RasterFormat::A1R5G5B5)) {
+        formatText = "A1R5G5B5";
+    } else if (baseFormat == static_cast<uint32_t>(LibTXD::RasterFormat::R4G4B4A4)) {
+        formatText = "R4G4B4A4";
+    } else if (baseFormat == static_cast<uint32_t>(LibTXD::RasterFormat::LUM8)) {
+        formatText = "LUM8";
+    } else if (baseFormat == static_cast<uint32_t>(LibTXD::RasterFormat::R5G5B5)) {
+        formatText = "R5G5B5";
+    } else if (baseFormat == static_cast<uint32_t>(LibTXD::RasterFormat::DEFAULT)) {
+        formatText = "Default";
+    } else {
+        formatText = QString("Unknown (0x%1)").arg(baseFormat, 4, 16, QChar('0')).toUpper();
     }
     
-    // Set compression combo
-    LibTXD::Compression comp = currentEntry->getCompression();
-    for (int i = 0; i < compressionCombo->count(); i++) {
-        if (compressionCombo->itemData(i).toInt() == static_cast<int>(comp)) {
-            compressionCombo->setCurrentIndex(i);
-            break;
-        }
-    }
+    // Format is read-only for both new and existing textures (auto-set for new, preserved for existing)
+    // Always show as label (plain text)
+    formatCombo->hide();
+    formatLabel->show();
+    formatLabel->setText(formatText);
+    
+    // Set compression checkbox
+    compressionCheck->setChecked(currentEntry->compressionEnabled);
     
     // Set filter
-    uint32_t filter = currentEntry->getFilterFlags();
+    uint32_t filter = currentEntry->filterFlags;
     for (int i = 0; i < filterCombo->count(); i++) {
         if (filterCombo->itemData(i).toUInt() == filter) {
             filterCombo->setCurrentIndex(i);
@@ -346,12 +351,10 @@ void TexturePropertiesWidget::updateUI() {
 void TexturePropertiesWidget::blockSignals(bool block) {
     nameEdit->blockSignals(block);
     alphaNameEdit->blockSignals(block);
-    widthEdit->blockSignals(block);
-    heightEdit->blockSignals(block);
     mipmapEdit->blockSignals(block);
     alphaCheck->blockSignals(block);
     formatCombo->blockSignals(block);
-    compressionCombo->blockSignals(block);
+    compressionCheck->blockSignals(block);
     filterCombo->blockSignals(block);
     uWrapCombo->blockSignals(block);
     vWrapCombo->blockSignals(block);
@@ -359,30 +362,28 @@ void TexturePropertiesWidget::blockSignals(bool block) {
 
 void TexturePropertiesWidget::onNameChanged() {
     if (currentEntry) {
-        currentEntry->setName(nameEdit->text());
+        currentEntry->name = nameEdit->text();
         emit propertyChanged();
     }
 }
 
 void TexturePropertiesWidget::onAlphaNameChanged() {
     if (currentEntry) {
-        currentEntry->setMaskName(alphaNameEdit->text());
+        currentEntry->maskName = alphaNameEdit->text();
         emit propertyChanged();
     }
 }
-
 
 void TexturePropertiesWidget::onMipmapCountChanged() {
     if (currentEntry) {
         bool ok;
         int value = mipmapEdit->text().toInt(&ok);
         if (ok && value >= 1 && value <= 16) {
-            // Note: libtxd doesn't have setMipmapCount - mipmaps are managed individually
-            // This is read-only for now - user can't change mipmap count
-            mipmapEdit->setText(QString::number(currentEntry->getMipmapCount()));
+            // Mipmap count is read-only - revert to current value
+            mipmapEdit->setText(QString::number(currentEntry->mipmapCount));
         } else {
             // Revert to current value
-            mipmapEdit->setText(QString::number(currentEntry->getMipmapCount()));
+            mipmapEdit->setText(QString::number(currentEntry->mipmapCount));
         }
     }
 }
@@ -392,9 +393,42 @@ void TexturePropertiesWidget::onAlphaChannelToggled(bool enabled) {
         return;
     }
     
-    // TextureEntry::setHasAlpha() handles updating raw data and preview automatically
-    // It will check if DXT1->DXT3 upgrade is needed and reset alpha to white if needed
-    currentEntry->setHasAlpha(enabled);
+    // Update alpha channel in RGBA data
+    if (!currentEntry->diffuse.empty() && currentEntry->diffuse.size() == currentEntry->width * currentEntry->height * 4) {
+        if (enabled) {
+            // Alpha enabled - just set alpha to 255 (fully opaque)
+            for (size_t i = 3; i < currentEntry->diffuse.size(); i += 4) {
+                currentEntry->diffuse[i] = 255;
+            }
+        } else {
+            // Alpha disabled - composite RGB onto black background
+            // Formula: result = source * (alpha/255) + background * (1 - alpha/255)
+            // Background is black (0, 0, 0)
+            for (size_t i = 0; i < currentEntry->diffuse.size(); i += 4) {
+                float alpha = currentEntry->diffuse[i + 3] / 255.0f;
+                // Composite RGB onto black
+                currentEntry->diffuse[i] = static_cast<uint8_t>(currentEntry->diffuse[i] * alpha);     // R
+                currentEntry->diffuse[i + 1] = static_cast<uint8_t>(currentEntry->diffuse[i + 1] * alpha); // G
+                currentEntry->diffuse[i + 2] = static_cast<uint8_t>(currentEntry->diffuse[i + 2] * alpha); // B
+                currentEntry->diffuse[i + 3] = 255; // Fully opaque after compositing
+            }
+        }
+    }
+    
+    // Update alpha flag
+    currentEntry->hasAlpha = enabled;
+    
+    emit propertyChanged();
+}
+
+void TexturePropertiesWidget::onCompressionToggled(bool enabled) {
+    if (!currentEntry) {
+        return;
+    }
+    
+    // Just update the flag - compression happens on save
+    currentEntry->compressionEnabled = enabled;
+    
     emit propertyChanged();
 }
 

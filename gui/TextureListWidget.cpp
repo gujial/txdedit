@@ -1,5 +1,5 @@
 #include "TextureListWidget.h"
-#include "libtxd/txd_converter.h"
+#include "TXDModel.h"
 #include <QPixmap>
 #include <QImage>
 #include <QString>
@@ -20,53 +20,43 @@ TextureListWidget::TextureListWidget(QWidget *parent)
     setItemDelegate(new TextureListItemDelegate(this));
 }
 
-QString TextureListWidget::formatTextureInfo(const LibTXD::Texture* texture) const {
-    if (!texture || texture->getMipmapCount() == 0) {
+QString TextureListWidget::formatTextureInfo(const TXDFileEntry* entry) const {
+    if (!entry) {
         return "Invalid texture";
     }
     
-    const auto& mipmap = texture->getMipmap(0);
-    QString compressionStr;
-    switch (texture->getCompression()) {
-        case LibTXD::Compression::NONE:
-            compressionStr = "None";
-            break;
-        case LibTXD::Compression::DXT1:
-            compressionStr = "DXT1";
-            break;
-        case LibTXD::Compression::DXT3:
-            compressionStr = "DXT3";
-            break;
-        default:
-            compressionStr = "Unknown";
-            break;
-    }
+    QString compressionStr = entry->compressionEnabled ? 
+        (entry->hasAlpha ? "DXT3" : "DXT1") : "None";
     
     QString info = QString("Name: %1\nSize: %2x%3px\nHas alpha: %4\nCompression: %5")
-        .arg(QString::fromStdString(texture->getName()))
-        .arg(mipmap.width)
-        .arg(mipmap.height)
-        .arg(texture->hasAlpha() ? "Y" : "N")
+        .arg(entry->name)
+        .arg(entry->width)
+        .arg(entry->height)
+        .arg(entry->hasAlpha ? "Y" : "N")
         .arg(compressionStr);
     
     return info;
 }
 
-QPixmap TextureListWidget::createThumbnail(const LibTXD::Texture* texture, const uint8_t* data) const {
-    if (!texture || !data || texture->getMipmapCount() == 0) {
+QPixmap TextureListWidget::createThumbnail(const uint8_t* rgbaData, int width, int height, bool hasAlpha) const {
+    if (!rgbaData || width <= 0 || height <= 0) {
         return QPixmap();
     }
     
-    // Convert to RGBA8
-    auto rgbaData = LibTXD::TextureConverter::convertToRGBA8(*texture, 0);
-    if (!rgbaData) {
-        return QPixmap();
-    }
-    
-    const auto& mipmap = texture->getMipmap(0);
-    // Create QImage
-    QImage image(rgbaData.get(), mipmap.width, mipmap.height, QImage::Format_RGBA8888);
+    // Create QImage directly from RGBA data
+    QImage image(rgbaData, width, height, QImage::Format_RGBA8888);
     QImage imageCopy = image.copy();
+    
+    // If alpha is disabled, composite onto black background
+    if (!hasAlpha) {
+        QPixmap result(width, height);
+        result.fill(Qt::black);
+        QPainter painter(&result);
+        painter.setCompositionMode(QPainter::CompositionMode_SourceOver);
+        painter.drawImage(0, 0, imageCopy);
+        painter.end();
+        imageCopy = result.toImage();
+    }
     
     // Create thumbnail (32x32 max)
     QPixmap pixmap = QPixmap::fromImage(imageCopy);
@@ -77,33 +67,34 @@ QPixmap TextureListWidget::createThumbnail(const LibTXD::Texture* texture, const
     return pixmap;
 }
 
-void TextureListWidget::addTexture(const LibTXD::Texture* texture, const uint8_t* data, int index) {
-    if (!texture) {
+void TextureListWidget::addTexture(const TXDFileEntry* entry, int index) {
+    if (!entry) {
         return;
     }
     
-    QString info = formatTextureInfo(texture);
+    QString info = formatTextureInfo(entry);
     
     QListWidgetItem* item = new QListWidgetItem(info, this);
     
-    // Create thumbnail
-    QPixmap thumbnail = createThumbnail(texture, data);
-    if (!thumbnail.isNull()) {
-        item->setIcon(QIcon(thumbnail));
+    // Create thumbnail from RGBA data
+    if (!entry->diffuse.empty()) {
+        QPixmap thumbnail = createThumbnail(entry->diffuse.data(), entry->width, entry->height, entry->hasAlpha);
+        if (!thumbnail.isNull()) {
+            item->setIcon(QIcon(thumbnail));
+        }
     }
     
     // Store index as data
     item->setData(Qt::UserRole, index);
     
-    // Set item height to accommodate multi-line text (reduced padding)
+    // Set item height to accommodate multi-line text
     item->setSizeHint(QSize(item->sizeHint().width(), 80));
     
     addItem(item);
 }
 
-void TextureListWidget::updateTexture(const LibTXD::Texture* texture, const uint8_t* data, int index) {
-    QListWidgetItem* item = itemAt(0, 0); // This is a simplified approach
-    // In a real implementation, we'd find the item by index
+void TextureListWidget::updateTexture(const TXDFileEntry* entry, int index) {
+    QListWidgetItem* item = nullptr;
     for (int i = 0; i < count(); i++) {
         QListWidgetItem* it = this->item(i);
         if (it && it->data(Qt::UserRole).toInt() == index) {
@@ -112,20 +103,15 @@ void TextureListWidget::updateTexture(const LibTXD::Texture* texture, const uint
         }
     }
     
-    if (item && texture) {
-        QString name = QString::fromStdString(texture->getName());
-        if (name.isEmpty()) {
-            name = QString("Texture %1").arg(index);
-        }
+    if (item && entry) {
+        QString info = formatTextureInfo(entry);
+        item->setText(info);
         
-        QString info = formatTextureInfo(texture);
-        QString displayText = QString("%1\n%2").arg(name).arg(info);
-        
-        item->setText(displayText);
-        
-        QPixmap thumbnail = createThumbnail(texture, data);
-        if (!thumbnail.isNull()) {
-            item->setIcon(QIcon(thumbnail));
+        if (!entry->diffuse.empty()) {
+            QPixmap thumbnail = createThumbnail(entry->diffuse.data(), entry->width, entry->height, entry->hasAlpha);
+            if (!thumbnail.isNull()) {
+                item->setIcon(QIcon(thumbnail));
+            }
         }
     }
 }
@@ -137,7 +123,7 @@ void TextureListWidget::clearTextures() {
 void TextureListWidget::contextMenuEvent(QContextMenuEvent* event) {
     QListWidgetItem* item = itemAt(event->pos());
     if (!item) {
-        return; // No item under cursor
+        return;
     }
     
     int index = item->data(Qt::UserRole).toInt();
@@ -166,4 +152,3 @@ void TextureListWidget::contextMenuEvent(QContextMenuEvent* event) {
         emit removeRequested(index);
     }
 }
-

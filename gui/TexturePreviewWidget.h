@@ -16,17 +16,18 @@ class TexturePreviewWidget : public QWidget {
 
 public:
     explicit TexturePreviewWidget(QWidget *parent = nullptr);
-    void setTexture(const LibTXD::Texture* texture, const uint8_t* data, int originalWidth = 0, int originalHeight = 0);
+    // Simple: just pass RGBA data directly
+    void setTexture(const uint8_t* rgbaData, int width, int height, bool hasAlpha);
     void clear();
 
 private slots:
     void onTabChanged(int index);
 
 private:
-    void updateImageTab(const LibTXD::Texture* texture, const uint8_t* data, int originalWidth = 0, int originalHeight = 0);
-    void updateAlphaTab(const LibTXD::Texture* texture, const uint8_t* data, int originalWidth = 0, int originalHeight = 0);
-    void updateMixedTab(const LibTXD::Texture* texture, const uint8_t* data, int originalWidth = 0, int originalHeight = 0);
-    QPixmap createImagePixmap(const LibTXD::Texture* texture, const uint8_t* data, bool showAlpha = false, bool mixed = false, int originalWidth = 0, int originalHeight = 0);
+    void updateImageTab(const uint8_t* rgbaData, int width, int height);
+    void updateAlphaTab(const uint8_t* rgbaData, int width, int height);
+    void updateMixedTab(const uint8_t* rgbaData, int width, int height);
+    QPixmap createImagePixmap(const uint8_t* rgbaData, int width, int height, bool hasAlpha, bool showAlpha = false, bool mixed = false);
     
     QVBoxLayout* mainLayout;
     QTabWidget* tabWidget;
@@ -39,6 +40,7 @@ private:
     int alphaTabIndex;
     int mixedTabIndex;
     bool alphaTabsVisible;
+    bool currentHasAlpha;  // Store current alpha state
 };
 
 #endif // TEXTUREPREVIEWWIDGET_H
