@@ -40,16 +40,14 @@ TexturePropertiesWidget::TexturePropertiesWidget(QWidget *parent)
     widthEdit = new QLineEdit(contentWidget);
     widthEdit->setValidator(new QIntValidator(1, 4096, widthEdit));
     widthEdit->setText("256");
-    connect(widthEdit, &QLineEdit::editingFinished, 
-            this, &TexturePropertiesWidget::onWidthChanged);
+    widthEdit->setReadOnly(true); // Read-only: dimensions come from texture data
     basicLayout->addRow("Width:", widthEdit);
     
     // Height input field with number validation
     heightEdit = new QLineEdit(contentWidget);
     heightEdit->setValidator(new QIntValidator(1, 4096, heightEdit));
     heightEdit->setText("256");
-    connect(heightEdit, &QLineEdit::editingFinished, 
-            this, &TexturePropertiesWidget::onHeightChanged);
+    heightEdit->setReadOnly(true); // Read-only: dimensions come from texture data
     basicLayout->addRow("Height:", heightEdit);
     
     // Mipmap input field with number validation
@@ -375,43 +373,6 @@ void TexturePropertiesWidget::onAlphaNameChanged() {
     }
 }
 
-void TexturePropertiesWidget::onWidthChanged() {
-    if (currentTexture && currentTexture->getMipmapCount() > 0) {
-        bool ok;
-        int value = widthEdit->text().toInt(&ok);
-        if (ok && value >= 1 && value <= 4096) {
-            // Note: Changing dimensions requires resizing mipmap data
-            // This is a complex operation, so we'll just update the mipmap width
-            // Full resize would require decompressing, resizing, and recompressing
-            auto& mipmap = currentTexture->getMipmap(0);
-            mipmap.width = value;
-            emit propertyChanged();
-        } else {
-            // Revert to current value
-            const auto& mipmap = currentTexture->getMipmap(0);
-            widthEdit->setText(QString::number(mipmap.width));
-        }
-    }
-}
-
-void TexturePropertiesWidget::onHeightChanged() {
-    if (currentTexture && currentTexture->getMipmapCount() > 0) {
-        bool ok;
-        int value = heightEdit->text().toInt(&ok);
-        if (ok && value >= 1 && value <= 4096) {
-            // Note: Changing dimensions requires resizing mipmap data
-            // This is a complex operation, so we'll just update the mipmap height
-            // Full resize would require decompressing, resizing, and recompressing
-            auto& mipmap = currentTexture->getMipmap(0);
-            mipmap.height = value;
-            emit propertyChanged();
-        } else {
-            // Revert to current value
-            const auto& mipmap = currentTexture->getMipmap(0);
-            heightEdit->setText(QString::number(mipmap.height));
-        }
-    }
-}
 
 void TexturePropertiesWidget::onMipmapCountChanged() {
     if (currentTexture) {

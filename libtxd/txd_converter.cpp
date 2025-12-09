@@ -215,9 +215,18 @@ std::unique_ptr<uint8_t[]> TextureConverter::convertToRGBA8(
     
     if (isPalette) {
         // Handle palette texture
-        uint32_t paletteSize = (rasterFormat & 0x2000) != 0 ? 256 : 16;
-        const uint8_t* paletteData = mipmap.data.data();
-        const uint8_t* indexedData = mipmap.data.data() + (paletteSize * 4);
+        uint32_t paletteSize = texture.getPaletteSize();
+        const std::vector<uint8_t>& palette = texture.getPalette();
+        
+        if (paletteSize == 0 || palette.empty() || palette.size() < paletteSize * 4) {
+            // Invalid palette data - fill with black
+            std::memset(output.get(), 0, mipmap.width * mipmap.height * 4);
+            return output;
+        }
+        
+        // For palette textures, mipmap.data contains only the indexed image data
+        const uint8_t* indexedData = mipmap.data.data();
+        const uint8_t* paletteData = palette.data();
         
         convertPaletteToRGBA(indexedData, paletteData, paletteSize, mipmap.width, mipmap.height, output.get());
     } else {

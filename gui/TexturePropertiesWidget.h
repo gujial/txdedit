@@ -31,8 +31,6 @@ signals:
 private slots:
     void onNameChanged();
     void onAlphaNameChanged();
-    void onWidthChanged();
-    void onHeightChanged();
     void onMipmapCountChanged();
     void onAlphaChannelToggled(bool enabled);
 
