@@ -40,7 +40,7 @@ public:
     // Version info
     GameVersion getGameVersion() const { return gameVersion; }
     uint32_t getVersion() const { return version; }
-    void setVersion(uint32_t v) { version = v; }
+    void setVersion(uint32_t v);
     
     // File I/O
     bool load(const std::string& filepath);

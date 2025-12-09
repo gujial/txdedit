@@ -288,6 +288,11 @@ GameVersion TextureDictionary::detectGameVersion(uint32_t versionValue) {
     return GameVersion::UNKNOWN;
 }
 
+void TextureDictionary::setVersion(uint32_t v) {
+    version = v;
+    gameVersion = detectGameVersion(v);
+}
+
 void TextureDictionary::rebuildTextureMap() {
     textureMap.clear();
     for (size_t i = 0; i < textures.size(); i++) {
