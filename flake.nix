@@ -12,7 +12,7 @@
         pkgs = nixpkgs.legacyPackages.${system};
         
         # Application version
-        version = "1.0.0";
+        version = "1.0.2";
         
       in
       {
