@@ -76,6 +76,7 @@ FetchContent_MakeAvailable(googletest)" "find_package(GTest REQUIRED)"
               Exec=$out/bin/txdedit
               Terminal=false
               Categories=Graphics;Viewer;Editor;
+              Icon=$out/share/txdedit/icons/linux.png
               EOF
             '';
             
