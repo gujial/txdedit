@@ -28,17 +28,33 @@
             nativeBuildInputs = with pkgs; [
               cmake
               pkg-config
-              wrapQtAppsHook
+              qt6.wrapQtAppsHook
+              git
             ];
             
             buildInputs = with pkgs; [
               qt6.qtbase
               qt6.qttools
+              gtest
             ];
             
             cmakeFlags = [
               "-DCMAKE_BUILD_TYPE=Release"
             ];
+            
+            # Patch CMakeLists.txt to use system gtest instead of FetchContent
+            postPatch = ''
+              substituteInPlace CMakeLists.txt \
+                --replace-fail "include(FetchContent)
+FetchContent_Declare(
+  googletest
+  GIT_REPOSITORY https://github.com/google/googletest.git
+  GIT_TAG v1.14.0
+)
+# For Windows: Prevent overriding the parent project's compiler/linker settings
+set(gtest_force_shared_crt ON CACHE BOOL \"\" FORCE)
+FetchContent_MakeAvailable(googletest)" "find_package(GTest REQUIRED)"
+            '';
             
             # Install phase
             installPhase = ''

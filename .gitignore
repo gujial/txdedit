@@ -199,3 +199,6 @@ package-lock.json
 # Local configuration
 config.local.*
 *.local
+
+# Nix build files
+result
