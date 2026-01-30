@@ -99,7 +99,6 @@ FetchContent_MakeAvailable(googletest)" "find_package(GTest REQUIRED)"
             pkg-config
             qt6.qtbase
             qt6.qttools
-            qt6.qtcreator
             gtest
             clang-tools
           ];

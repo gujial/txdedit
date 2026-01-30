@@ -1,4 +1,4 @@
-# TXD Edit
+# TXD Edit (With Nix Flakes Support)
 
 <div align="center">
 
@@ -66,6 +66,7 @@ Download the latest release for your platform:
 - **Windows**: [Download ZIP](https://github.com/vaibhavpandeyvpz/txdedit/releases/latest/download/txdedit-windows-x64.zip)
 - **macOS**: [Download DMG](https://github.com/vaibhavpandeyvpz/txdedit/releases/latest/download/txdedit-macos-x64.dmg)
 - **Linux**: [Download AppImage](https://github.com/vaibhavpandeyvpz/txdedit/releases/latest/download/txdedit-linux-x86_64.AppImage)
+- **Nixos**: Add `inputs.txdedit.url = "github:gujial/txdedit"` to your `flake.nix` and add `txdedit.packages.${pkgs.stdenv.hostPlatform.system}.default` to your `environment.systemPackages`.
 
 ### All Releases
 
@@ -77,7 +78,7 @@ View all releases and download previous versions: [Releases](https://github.com/
 | -------------- | --------- | ------------------ |
 | Windows 10/11  | ZIP (x64) | ✅ Fully Supported |
 | macOS 10.15+   | DMG (x64) | ✅ Fully Supported |
-| Linux (x86_64) | AppImage  | ✅ Fully Supported |
+| Linux (x86_64) | AppImage/Nix Flakes  | ✅ Fully Supported |
 
 ## 🚀 Quick Start
 
@@ -124,6 +125,12 @@ sudo apt-get install cmake qt6-base-dev qt6-base-dev-tools
 2. Install Qt from https://www.qt.io/download
 3. Make sure Qt's bin directory is in your PATH
 
+#### Nixos
+
+```bash
+nix develop
+```
+
 ### Building
 
 #### Linux & macOS
@@ -161,6 +168,12 @@ git submodule update --init --recursive
 ```
 
 The executable will be in `build/bin/Release/txdedit.exe`.
+
+#### Nixos
+
+```bash
+nix build
+```
 
 ### Troubleshooting
 
